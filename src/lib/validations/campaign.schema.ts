@@ -17,14 +17,14 @@ export const CampaignCreateSchema = z
       .min(20, 'Campaign description must be detailed (at least 20 characters)')
       .max(2000, 'Description cannot exceed 2000 characters'),
     platform: z.enum(['youtube', 'tiktok', 'instagram', 'all'], {
-      errorMap: () => ({ message: 'Invalid target platform selected' }),
+      message: 'Invalid target platform selected',
     }),
     totalBudgetCents: z
-      .number({ invalid_type_error: 'Budget must be a valid number' })
+      .number({ message: 'Budget must be a valid number' })
       .int('Budget must be an integer in cents')
       .positive('Budget must be greater than zero ($0.00)'),
     payoutPer1kViewsCents: z
-      .number({ invalid_type_error: 'Payout rate must be a valid number' })
+      .number({ message: 'Payout rate must be a valid number' })
       .int('Payout rate must be an integer in cents')
       .positive('Payout rate must be greater than zero'),
     minViewThreshold: z
@@ -65,11 +65,11 @@ export type CampaignCreateInput = z.infer<typeof CampaignCreateSchema>;
 export const WithdrawalRequestSchema = z
   .object({
     amountCents: z
-      .number({ invalid_type_error: 'Withdrawal amount must be a number' })
+      .number({ message: 'Withdrawal amount must be a number' })
       .int('Amount must be an integer in cents')
       .min(1000, 'Minimum withdrawal amount is $10.00 (1000 cents)'),
     paymentMethod: z.enum(['stripe', 'razorpay', 'paypal', 'upi', 'bank_transfer'], {
-      errorMap: () => ({ message: 'Unsupported payment method selected' }),
+      message: 'Unsupported payment method selected',
     }),
     destinationAccount: z
       .string()
