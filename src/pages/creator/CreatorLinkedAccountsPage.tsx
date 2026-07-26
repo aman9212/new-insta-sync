@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Icon } from '../../components/ui/Icon';
-import { getLinkedAccounts } from '../../services/intelligence.service';
+import { getLinkedAccounts, disconnectAccount } from '../../services/intelligence.service';
 import { socialIntegrationService } from '../../services/social-integration.service';
 import { TableSkeleton } from '../../components/ui/Skeleton';
 import { Button } from '../../components/ui/Button';
@@ -44,7 +44,7 @@ export function CreatorLinkedAccountsPage() {
   // Bio Verification Modal state
   const [bioVerifConn, setBioVerifConn] = useState<ProviderConnectionExtended | null>(null);
 
-  // Read message from router state (e.g. from OAuth callback redirect)
+  // Read message from router state
   useEffect(() => {
     const state = location.state as { message?: string } | null;
     if (state?.message) {
@@ -91,14 +91,8 @@ export function CreatorLinkedAccountsPage() {
     }
   };
 
-  const handleInstagramConnectClick = () => {
-    const activeConn = connections.find(c => c.provider === 'instagram' && c.status === 'active');
-    if (activeConn && !activeConn.ownership_verified) {
-      // Show choose verification method modal
-      setShowMethodModal(true);
-    } else {
-      setShowMethodModal(true);
-    }
+  const handleAddInstagramAccount = () => {
+    setShowMethodModal(true);
   };
 
   const handleSelectMethod = async (method: 'oauth' | 'bio') => {
@@ -106,62 +100,66 @@ export function CreatorLinkedAccountsPage() {
     if (method === 'oauth') {
       void handleConnect('instagram');
     } else {
-      let activeConn = connections.find(c => c.provider === 'instagram');
-      if (!activeConn && user) {
-        const inputUsername = prompt('Enter your Instagram Username for Bio Verification (e.g. aman__avtr):', '');
-        if (!inputUsername || !inputUsername.trim()) return;
+      if (!user) return;
 
-        if (!supabase) {
-          alert('Supabase client is not configured');
-          return;
-        }
+      const inputUsername = prompt('Enter Instagram Username to link (e.g. aman__avtr):', '');
+      if (!inputUsername || !inputUsername.trim()) return;
 
-        const cleanUsername = inputUsername.trim().replace(/^@/, '');
-        try {
-          const { data: newConn, error: connErr } = await supabase
-            .from('provider_connections')
-            .upsert({
-              user_id: user.id,
-              provider: 'instagram',
-              provider_username: cleanUsername,
-              display_name: cleanUsername,
-              status: 'active',
-              ownership_verified: false,
-              connection_status: 'pending',
-              connected_at: new Date().toISOString()
-            }, { onConflict: 'user_id,provider' })
-            .select()
-            .single();
-
-          if (connErr) {
-            console.error('Failed to create pending connection:', connErr);
-            alert('Failed to initialize Instagram account: ' + connErr.message);
-            return;
-          }
-          activeConn = newConn as any;
-          await loadData();
-        } catch (err) {
-          alert('Failed to initialize connection: ' + (err instanceof Error ? err.message : 'Error'));
-          return;
-        }
+      if (!supabase) {
+        alert('Supabase client is not configured');
+        return;
       }
 
-      if (activeConn) {
-        setBioVerifConn(activeConn);
+      const cleanUsername = inputUsername.trim().replace(/^@/, '').toLowerCase();
+
+      // Check if handle already exists
+      const existing = connections.find(
+        c => c.provider === 'instagram' && (c.provider_username || '').toLowerCase() === cleanUsername && c.status === 'active'
+      );
+
+      if (existing) {
+        setBioVerifConn(existing);
+        return;
+      }
+
+      try {
+        const { data: newConn, error: connErr } = await supabase
+          .from('provider_connections')
+          .insert({
+            user_id: user.id,
+            provider: 'instagram',
+            provider_username: cleanUsername,
+            display_name: cleanUsername,
+            status: 'active',
+            ownership_verified: false,
+            connection_status: 'pending',
+            connected_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (connErr) {
+          console.error('Failed to create Instagram connection:', connErr);
+          alert('Failed to initialize Instagram account: ' + connErr.message);
+          return;
+        }
+
+        setActionMessage(`Added @${cleanUsername}! Please complete bio ownership verification.`);
+        await loadData();
+        setBioVerifConn(newConn as ProviderConnectionExtended);
+      } catch (err) {
+        alert('Failed to initialize connection: ' + (err instanceof Error ? err.message : 'Error'));
       }
     }
   };
 
-  const handleForceSync = async (platformId: SocialPlatformId) => {
-    setActioningId(platformId);
+  const handleForceSync = async (connectionId: string, platformId: SocialPlatformId) => {
+    setActioningId(connectionId);
     try {
-      const conn = connections.find(c => c.provider === platformId);
-      if (conn) {
-        await socialIntegrationService.forceSyncAccount(conn.id, platformId);
-        setActionMessage(`Successfully queued manual sync for ${platformId.toUpperCase()}!`);
-        setTimeout(() => setActionMessage(null), 4000);
-        await loadData();
-      }
+      await socialIntegrationService.forceSyncAccount(connectionId, platformId);
+      setActionMessage(`Successfully queued manual sync!`);
+      setTimeout(() => setActionMessage(null), 4000);
+      await loadData();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to trigger manual sync.');
     } finally {
@@ -169,13 +167,13 @@ export function CreatorLinkedAccountsPage() {
     }
   };
 
-  const handleDisconnect = async (platformId: SocialPlatformId) => {
-    if (!confirm(`Are you sure you want to disconnect your ${platformId.toUpperCase()} account? Automated metric tracking for submissions on this channel will stop.`)) return;
-    setActioningId(platformId);
+  const handleDisconnectByConn = async (connectionId: string, handleName: string) => {
+    if (!confirm(`Are you sure you want to disconnect @${handleName}? Automated metric tracking for this account will stop.`)) return;
+    setActioningId(connectionId);
     try {
-      await socialIntegrationService.disconnect(platformId);
-      setConnections(prev => prev.filter(c => c.provider !== platformId));
-      setActionMessage(`Disconnected ${platformId.toUpperCase()} account successfully.`);
+      await disconnectAccount(connectionId);
+      setConnections(prev => prev.filter(c => c.id !== connectionId));
+      setActionMessage(`Disconnected @${handleName} successfully.`);
       setTimeout(() => setActionMessage(null), 4000);
       await loadData();
     } catch (err) {
@@ -189,27 +187,31 @@ export function CreatorLinkedAccountsPage() {
     return <TableSkeleton rows={4} cols={4} />;
   }
 
-  const displayPlatforms = platforms.length > 0 
+  const displayPlatforms = platforms.length > 0
     ? platforms.filter(p => PLATFORM_METAS[p.id])
     : Object.keys(PLATFORM_METAS).map(id => ({
         id: id as SocialPlatformId,
         displayName: PLATFORM_METAS[id].name,
-        enabled: id === 'youtube',
+        enabled: id === 'youtube' || id === 'instagram',
         apiHealthStatus: 'healthy',
         oauthSupported: true,
       } as any));
+
+  const instagramConns = connections.filter(c => c.provider === 'instagram' && c.status === 'active');
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold">Linked Social Accounts</h1>
-        <p className="mt-1 text-text-secondary">Manage platform authorizations and ownership verification for automatic submission tracking.</p>
+        <h1 className="text-2xl font-bold tracking-tight sm:text-3xl text-text-primary">Linked Social Accounts</h1>
+        <p className="mt-1 text-xs sm:text-sm text-text-secondary">
+          Manage platform authorizations and ownership verification for automatic submission tracking.
+        </p>
       </div>
 
       {actionMessage && (
-        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-400 flex items-center justify-between animate-fade-in">
-          <span>✓ {actionMessage}</span>
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-xs sm:text-sm text-emerald-400 flex items-center justify-between animate-fade-in">
+          <span className="font-medium">✓ {actionMessage}</span>
           <button type="button" onClick={() => setActionMessage(null)}>
             <Icon name="x" size={14} />
           </button>
@@ -217,7 +219,7 @@ export function CreatorLinkedAccountsPage() {
       )}
 
       {error && (
-        <div className="rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-danger">{error}</div>
+        <div className="rounded-xl border border-danger/30 bg-danger/10 p-3.5 text-xs sm:text-sm text-danger">{error}</div>
       )}
 
       {/* Grid of supported platforms */}
@@ -225,43 +227,131 @@ export function CreatorLinkedAccountsPage() {
         {displayPlatforms.map((platform) => {
           const key = platform.id;
           const meta = PLATFORM_METAS[key] || { name: platform.displayName || key, logo: '🔗', color: 'border-border bg-surface' };
-          
-          const activeConn = connections.find(c => c.provider === key && c.status === 'active');
-          const isExpired = connections.some(c => c.provider === key && c.status === 'expired');
           const isConfiguredOnBackend = platform.enabled;
 
-          const isOwnershipVerified = activeConn?.ownership_verified === true;
+          // Instagram Special Multi-Account Card
+          if (key === 'instagram') {
+            return (
+              <div
+                key={key}
+                className={`surface-card p-4 flex flex-col justify-between space-y-3.5 border rounded-2xl ${meta.color} transition-all hover:shadow-md`}
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-xl">{meta.logo}</span>
+                    <div>
+                      <h3 className="font-bold text-text-primary text-sm sm:text-base">{meta.name}</h3>
+                      <span className="text-[10px] text-text-muted">Multi-ID Account Sync</span>
+                    </div>
+                  </div>
+                  <Badge variant={instagramConns.length > 0 ? 'success' : 'neutral'} size="sm">
+                    {instagramConns.length > 0 ? `${instagramConns.length} Connected` : 'Not Linked'}
+                  </Badge>
+                </div>
+
+                {/* List of Connected Instagram Accounts */}
+                {instagramConns.length > 0 ? (
+                  <div className="space-y-2.5 max-h-[280px] overflow-y-auto pr-1">
+                    {instagramConns.map((conn) => {
+                      const isVerified = conn.ownership_verified === true;
+                      return (
+                        <div
+                          key={conn.id}
+                          className="bg-surface-elevated/60 rounded-xl p-3 text-xs space-y-2 border border-white/10"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-text-primary text-xs">@{conn.provider_username || 'handle'}</span>
+                            {isVerified ? (
+                              <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                                <Icon name="check-circle" size={10} /> Verified
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-semibold text-amber-400 flex items-center gap-1 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                                <Icon name="alert-triangle" size={10} /> Unverified
+                              </span>
+                            )}
+                          </div>
+
+                          {!isVerified && (
+                            <div className="rounded-lg bg-amber-500/10 p-2 text-[10px] text-amber-300 flex items-center justify-between border border-amber-500/20">
+                              <span>Bio verification recommended</span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="h-7 text-[10px] px-2 bg-gradient-to-r from-amber-500 to-pink-500 text-black font-bold border-none"
+                                onClick={() => setBioVerifConn(conn)}
+                              >
+                                Verify Bio
+                              </Button>
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-1.5 pt-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-1/2 h-7 text-[11px] px-2 flex items-center justify-center gap-1"
+                              disabled={actioningId === conn.id}
+                              onClick={() => handleForceSync(conn.id, 'instagram')}
+                            >
+                              <Icon name="refresh-cw" size={11} className={actioningId === conn.id ? 'animate-spin' : ''} /> Sync
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-1/2 h-7 text-[11px] px-2 flex items-center justify-center gap-1 text-danger hover:bg-danger/10 hover:text-danger"
+                              disabled={actioningId === conn.id}
+                              onClick={() => handleDisconnectByConn(conn.id, conn.provider_username || 'handle')}
+                            >
+                              <Icon name="trash-2" size={11} /> Remove
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-text-secondary leading-relaxed">
+                    Link your Instagram handles to track views and engagement directly from your posts.
+                  </p>
+                )}
+
+                {/* Compact Add Another Instagram Account Button */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full h-8 text-xs font-semibold border-dashed border-pink-500/40 bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 flex items-center justify-center gap-1.5"
+                  onClick={handleAddInstagramAccount}
+                >
+                  <Icon name="plus" size={13} />
+                  {instagramConns.length > 0 ? '+ Add Another Instagram ID' : 'Connect Instagram ID'}
+                </Button>
+              </div>
+            );
+          }
+
+          // Single-connection platforms (YouTube, Facebook, TikTok, X, LinkedIn)
+          const activeConn = connections.find(c => c.provider === key && c.status === 'active');
+          const isExpired = connections.some(c => c.provider === key && c.status === 'expired');
 
           return (
             <div
               key={key}
-              className={`surface-card p-5 flex flex-col justify-between space-y-4 border rounded-[24px] ${meta.color} transition hover:shadow-md`}
+              className={`surface-card p-4 flex flex-col justify-between space-y-3 border rounded-2xl ${meta.color} transition-all hover:shadow-md`}
             >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">{meta.logo}</span>
+              <div className="flex items-center justify-between pb-1 border-b border-white/10">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-xl">{meta.logo}</span>
                   <div>
-                    <h3 className="font-bold text-text-primary text-base">{meta.name}</h3>
+                    <h3 className="font-bold text-text-primary text-sm sm:text-base">{meta.name}</h3>
                     {!isConfiguredOnBackend && (
                       <span className="text-[10px] text-text-muted">Integration not active</span>
                     )}
                   </div>
                 </div>
                 {activeConn ? (
-                  <div className="flex flex-col items-end gap-1">
-                    <Badge variant="success" size="sm">Connected</Badge>
-                    {key === 'instagram' && (
-                      isOwnershipVerified ? (
-                        <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-0.5">
-                          <Icon name="check-circle" size={11} /> Verified Creator
-                        </span>
-                      ) : (
-                        <span className="text-[10px] font-semibold text-amber-400 flex items-center gap-0.5">
-                          <Icon name="alert-triangle" size={11} /> Unverified
-                        </span>
-                      )
-                    )}
-                  </div>
+                  <Badge variant="success" size="sm">Connected</Badge>
                 ) : isExpired ? (
                   <Badge variant="danger" size="sm">Expired</Badge>
                 ) : (
@@ -270,112 +360,55 @@ export function CreatorLinkedAccountsPage() {
               </div>
 
               {activeConn ? (
-                <div className="space-y-3">
-                  <div className="bg-surface-elevated/40 rounded-xl p-3 text-xs space-y-2 border border-white/5">
+                <div className="space-y-2.5">
+                  <div className="bg-surface-elevated/40 rounded-xl p-2.5 text-xs space-y-1 border border-white/5">
                     <div className="text-text-secondary flex justify-between">
                       <span>Username:</span>
-                      <span className="font-bold text-text-primary">@{activeConn.provider_username || 'unknown'}</span>
+                      <span className="font-bold text-text-primary">@{activeConn.provider_username || 'connected'}</span>
                     </div>
-
-                    <div className="text-text-secondary flex justify-between">
-                      <span>Method 1 (Link Account):</span>
-                      <span className="text-emerald-400 flex items-center gap-1 font-semibold">
-                        <Icon name="check-circle" size={12} /> Connected
-                      </span>
-                    </div>
-
-                    {/* Method 2: Instagram Bio Verification Banner */}
-                    {key === 'instagram' && (
-                      <div className="pt-2 border-t border-white/10 space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-text-secondary font-medium">Method 2 (Ownership):</span>
-                          {isOwnershipVerified ? (
-                            <span className="text-emerald-400 font-bold flex items-center gap-1">
-                              <Icon name="shield-check" size={12} /> Verified
-                            </span>
-                          ) : (
-                            <span className="text-amber-400 font-bold flex items-center gap-1">
-                              <Icon name="alert-circle" size={12} /> Not Verified
-                            </span>
-                          )}
-                        </div>
-
-                        {isOwnershipVerified ? (
-                          <div className="rounded-lg bg-emerald-500/10 p-2 text-[11px] text-emerald-300 space-y-0.5 border border-emerald-500/20">
-                            <div className="font-semibold">Verified using Instagram Bio</div>
-                            {activeConn.verified_at && (
-                              <div className="text-[10px] text-emerald-400/80">
-                                Date verified: {new Date(activeConn.verified_at).toLocaleDateString()}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="rounded-lg bg-amber-500/10 p-2 text-[11px] text-amber-300 space-y-2 border border-amber-500/20">
-                            <span>Bio ownership verification recommended for campaign submissions.</span>
-                            <Button
-                              type="button"
-                              variant="primary"
-                              className="w-full text-xs h-8 bg-gradient-to-r from-amber-500 to-pink-500 hover:from-amber-600 hover:to-pink-600 border-none text-black font-bold flex items-center justify-center gap-1.5 shadow-sm"
-                              onClick={() => setBioVerifConn(activeConn)}
-                            >
-                              <Icon name="shield-check" size={13} />
-                              Verify via Bio
-                              <span className="ml-1 rounded bg-black/20 px-1.5 py-0.5 text-[9px] font-extrabold uppercase">Recommended</span>
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
                     {activeConn.last_sync_at && (
-                      <div className="text-text-secondary flex justify-between text-[11px] pt-1">
+                      <div className="text-text-secondary flex justify-between text-[10px]">
                         <span>Last Synced:</span>
-                        <span>{new Date(activeConn.last_sync_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}</span>
+                        <span>{new Date(activeConn.last_sync_at).toLocaleDateString()}</span>
                       </div>
                     )}
                   </div>
 
-                  <div className="flex gap-2">
-                    {key === 'instagram' && isOwnershipVerified && (
-                      <Button
-                        variant="outline"
-                        className="w-full text-xs h-9 flex items-center justify-center gap-1"
-                        onClick={() => setBioVerifConn(activeConn)}
-                      >
-                        <Icon name="shield" size={13} /> Re-verify Bio
-                      </Button>
-                    )}
+                  <div className="flex items-center gap-1.5">
                     <Button
                       variant="outline"
-                      className="w-full text-xs h-9 flex items-center justify-center gap-1.5"
-                      disabled={actioningId === key}
-                      onClick={() => handleForceSync(key)}
+                      size="sm"
+                      className="w-1/2 h-8 text-xs font-semibold flex items-center justify-center gap-1"
+                      disabled={actioningId === activeConn.id}
+                      onClick={() => handleForceSync(activeConn.id, key)}
                     >
-                      <Icon name="refresh-cw" size={13} className={actioningId === key ? 'animate-spin' : ''} /> Sync
+                      <Icon name="refresh-cw" size={12} className={actioningId === activeConn.id ? 'animate-spin' : ''} /> Sync
                     </Button>
                     <Button
                       variant="outline"
-                      className="w-full text-xs h-9 flex items-center justify-center gap-1.5 text-danger hover:bg-danger/10 hover:text-danger"
-                      disabled={actioningId === key}
-                      onClick={() => handleDisconnect(key)}
+                      size="sm"
+                      className="w-1/2 h-8 text-xs font-semibold flex items-center justify-center gap-1 text-danger hover:bg-danger/10 hover:text-danger"
+                      disabled={actioningId === activeConn.id}
+                      onClick={() => handleDisconnectByConn(activeConn.id, activeConn.provider_username || key)}
                     >
-                      <Icon name="trash-2" size={13} /> Disconnect
+                      <Icon name="trash-2" size={12} /> Disconnect
                     </Button>
                   </div>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                   <p className="text-xs text-text-secondary leading-relaxed">
-                    Authorize CreatorX to sync views and engagement directly from your posts on {meta.name}.
+                    Authorize CreatorX to sync views and engagement directly from {meta.name}.
                   </p>
                   <Button
                     variant="primary"
-                    className="w-full text-xs h-9 flex items-center justify-center gap-1.5"
+                    size="sm"
+                    className="w-full h-8 text-xs font-semibold flex items-center justify-center gap-1.5"
                     disabled={!isConfiguredOnBackend || actioningId === key}
-                    onClick={() => key === 'instagram' ? handleInstagramConnectClick() : handleConnect(key)}
+                    onClick={() => handleConnect(key)}
                   >
-                    <Icon name="link" size={13} />
-                    {actioningId === key ? 'Initiating OAuth...' : isExpired ? 'Reconnect Account' : 'Connect Account'}
+                    <Icon name="link" size={12} />
+                    {actioningId === key ? 'Connecting...' : isExpired ? 'Reconnect' : 'Connect Account'}
                   </Button>
                 </div>
               )}
