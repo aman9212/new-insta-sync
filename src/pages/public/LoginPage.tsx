@@ -5,11 +5,10 @@ import { useAuth } from '../../hooks/useAuth';
 import { Button } from '../../components/ui/Button';
 
 export function LoginPage() {
-  const { configured, profile, signInWithGoogle } = useAuth();
+  const { profile, signInWithGoogle } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  if (!configured) return <Navigate to="/" replace />;
   if (profile?.onboarding_completed) return <Navigate to={`/${profile.role}/dashboard`} replace />;
 
   async function handleGoogle() {
