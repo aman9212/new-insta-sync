@@ -28,6 +28,75 @@ const PLATFORM_METAS: Record<string, PlatformMeta> = {
   linkedin: { name: 'LinkedIn', logo: '💼', color: 'border-cyan-500/20 bg-cyan-500/5' },
 };
 
+function AddInstagramModal({
+  isOpen,
+  onClose,
+  onSubmit,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (username: string) => void;
+}) {
+  const [usernameInput, setUsernameInput] = useState('');
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-md animate-fade-in">
+      <div className="surface-card relative w-full max-w-md overflow-hidden rounded-[24px] border border-white/10 bg-bg-secondary p-6 shadow-2xl space-y-5">
+        <div className="flex items-center justify-between border-b border-border/60 pb-3">
+          <div className="flex items-center gap-2.5">
+            <span className="text-2xl">📷</span>
+            <div>
+              <h3 className="font-bold text-text-primary text-base">Add Instagram Handle</h3>
+              <p className="text-xs text-text-secondary">Link an Instagram ID for submission tracking</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-xl p-1 text-text-muted hover:text-text-primary">
+            <Icon name="x" size={18} />
+          </button>
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (usernameInput.trim()) {
+              onSubmit(usernameInput.trim());
+              setUsernameInput('');
+              onClose();
+            }
+          }}
+          className="space-y-4"
+        >
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-text-secondary">Instagram Username or Profile URL</label>
+            <div className="relative">
+              <span className="absolute left-3.5 top-2.5 text-xs font-mono font-bold text-accent">@</span>
+              <input
+                type="text"
+                autoFocus
+                value={usernameInput}
+                onChange={(e) => setUsernameInput(e.target.value)}
+                placeholder="aman__avtr or instagram.com/aman__avtr"
+                className="w-full rounded-xl border border-white/15 bg-black/40 pl-8 pr-3 py-2.5 text-xs text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="outline" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" size="sm" disabled={!usernameInput.trim()} className="font-bold px-4">
+              Continue to Bio Verification
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export function CreatorLinkedAccountsPage() {
   const { user } = useAuth();
   const location = useLocation();
@@ -40,6 +109,7 @@ export function CreatorLinkedAccountsPage() {
 
   // Method Selection Modal state
   const [showMethodModal, setShowMethodModal] = useState(false);
+  const [showAddHandleModal, setShowAddHandleModal] = useState(false);
 
   // Bio Verification Modal state
   const [bioVerifConn, setBioVerifConn] = useState<ProviderConnectionExtended | null>(null);
@@ -100,56 +170,64 @@ export function CreatorLinkedAccountsPage() {
     if (method === 'oauth') {
       void handleConnect('instagram');
     } else {
-      if (!user) return;
+      setShowAddHandleModal(true);
+    }
+  };
 
-      const inputUsername = prompt('Enter Instagram Username to link (e.g. aman__avtr):', '');
-      if (!inputUsername || !inputUsername.trim()) return;
+  const handleCreateInstagramConnection = async (rawUsername: string) => {
+    if (!user) return;
+    const cleanUsername = rawUsername
+      .trim()
+      .replace(/^https?:\/\/(www\.)?instagram\.com\//i, '')
+      .replace(/^@/, '')
+      .split('/')[0]
+      .split('?')[0]
+      .toLowerCase();
 
-      if (!supabase) {
-        alert('Supabase client is not configured');
+    if (!cleanUsername) return;
+
+    if (!supabase) {
+      alert('Supabase client is not configured');
+      return;
+    }
+
+    // Check if handle already exists
+    const existing = connections.find(
+      c => c.provider === 'instagram' && (c.provider_username || '').toLowerCase() === cleanUsername && c.status === 'active'
+    );
+
+    if (existing) {
+      setBioVerifConn(existing);
+      return;
+    }
+
+    try {
+      const { data: newConn, error: connErr } = await supabase
+        .from('provider_connections')
+        .insert({
+          user_id: user.id,
+          provider: 'instagram',
+          provider_username: cleanUsername,
+          display_name: cleanUsername,
+          status: 'active',
+          ownership_verified: false,
+          connection_status: 'pending',
+          connected_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (connErr) {
+        console.error('Failed to create Instagram connection:', connErr);
+        alert('Failed to initialize Instagram account: ' + connErr.message);
         return;
       }
 
-      const cleanUsername = inputUsername.trim().replace(/^@/, '').toLowerCase();
-
-      // Check if handle already exists
-      const existing = connections.find(
-        c => c.provider === 'instagram' && (c.provider_username || '').toLowerCase() === cleanUsername && c.status === 'active'
-      );
-
-      if (existing) {
-        setBioVerifConn(existing);
-        return;
-      }
-
-      try {
-        const { data: newConn, error: connErr } = await supabase
-          .from('provider_connections')
-          .insert({
-            user_id: user.id,
-            provider: 'instagram',
-            provider_username: cleanUsername,
-            display_name: cleanUsername,
-            status: 'active',
-            ownership_verified: false,
-            connection_status: 'pending',
-            connected_at: new Date().toISOString(),
-          })
-          .select()
-          .single();
-
-        if (connErr) {
-          console.error('Failed to create Instagram connection:', connErr);
-          alert('Failed to initialize Instagram account: ' + connErr.message);
-          return;
-        }
-
-        setActionMessage(`Added @${cleanUsername}! Please complete bio ownership verification.`);
-        await loadData();
-        setBioVerifConn(newConn as ProviderConnectionExtended);
-      } catch (err) {
-        alert('Failed to initialize connection: ' + (err instanceof Error ? err.message : 'Error'));
-      }
+      setActionMessage(`Added @${cleanUsername}! Complete bio verification.`);
+      await loadData();
+      setBioVerifConn(newConn as ProviderConnectionExtended);
+    } catch (err) {
+      alert('Failed to initialize connection: ' + (err instanceof Error ? err.message : 'Error'));
     }
   };
 
@@ -422,6 +500,13 @@ export function CreatorLinkedAccountsPage() {
         isOpen={showMethodModal}
         onClose={() => setShowMethodModal(false)}
         onSelectMethod={handleSelectMethod}
+      />
+
+      {/* Custom Add Instagram Handle Modal */}
+      <AddInstagramModal
+        isOpen={showAddHandleModal}
+        onClose={() => setShowAddHandleModal(false)}
+        onSubmit={handleCreateInstagramConnection}
       />
 
       {/* Instagram Bio Verification Modal Component */}
