@@ -1,31 +1,45 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-function getEnvVar(key: string): string | undefined {
-  if (typeof process !== 'undefined' && process.env) {
-    if (process.env[key]) return process.env[key];
-    const stripped = key.replace(/^VITE_/, '');
-    if (process.env[stripped]) return process.env[stripped];
-    const prefixed = `VITE_${key}`;
-    if (process.env[prefixed]) return process.env[prefixed];
+function readSupabaseUrl(): string | undefined {
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      if (import.meta.env.VITE_SUPABASE_URL) return import.meta.env.VITE_SUPABASE_URL;
+      if ((import.meta.env as any).SUPABASE_URL) return (import.meta.env as any).SUPABASE_URL;
+    }
+  } catch {
+    // Ignore browser import.meta issues
   }
-  if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
-    const val = (import.meta as any).env[key];
-    if (val) return val;
-    const stripped = key.replace(/^VITE_/, '');
-    if ((import.meta as any).env[stripped]) return (import.meta as any).env[stripped];
-    const prefixed = `VITE_${key}`;
-    if ((import.meta as any).env[prefixed]) return (import.meta as any).env[prefixed];
+
+  if (typeof process !== 'undefined' && process.env) {
+    if (process.env.VITE_SUPABASE_URL) return process.env.VITE_SUPABASE_URL;
+    if (process.env.SUPABASE_URL) return process.env.SUPABASE_URL;
   }
   return undefined;
 }
 
-let cachedClient: SupabaseClient | null = null;
+function readSupabaseAnonKey(): string | undefined {
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      if (import.meta.env.VITE_SUPABASE_ANON_KEY) return import.meta.env.VITE_SUPABASE_ANON_KEY;
+      if ((import.meta.env as any).SUPABASE_ANON_KEY) return (import.meta.env as any).SUPABASE_ANON_KEY;
+    }
+  } catch {
+    // Ignore browser import.meta issues
+  }
 
-export function getSupabaseClient(): SupabaseClient | null {
-  if (cachedClient) return cachedClient;
+  if (typeof process !== 'undefined' && process.env) {
+    if (process.env.VITE_SUPABASE_ANON_KEY) return process.env.VITE_SUPABASE_ANON_KEY;
+    if (process.env.SUPABASE_ANON_KEY) return process.env.SUPABASE_ANON_KEY;
+  }
+  return undefined;
+}
 
-  const url = getEnvVar('VITE_SUPABASE_URL')?.trim();
-  const key = getEnvVar('VITE_SUPABASE_ANON_KEY')?.trim();
+const supabaseUrl = readSupabaseUrl();
+const supabaseAnonKey = readSupabaseAnonKey();
+
+function initSupabase(): SupabaseClient | null {
+  const url = supabaseUrl?.trim();
+  const key = supabaseAnonKey?.trim();
 
   if (!url || !key) {
     return null;
@@ -36,36 +50,21 @@ export function getSupabaseClient(): SupabaseClient | null {
     return null;
   }
 
-  cachedClient = createClient(url, key, {
+  return createClient(url, key, {
     auth: {
       autoRefreshToken: true,
       persistSession: typeof window !== 'undefined',
       detectSessionInUrl: typeof window !== 'undefined',
     },
   });
-
-  return cachedClient;
 }
 
-/**
- * Proxy export for backward compatibility.
- * Dynamically resolves to initialized SupabaseClient on demand.
- */
-export const supabase = new Proxy({} as SupabaseClient, {
-  get(_target, prop) {
-    const client = getSupabaseClient();
-    if (!client) {
-      return undefined;
-    }
-    const val = (client as any)[prop];
-    return typeof val === 'function' ? val.bind(client) : val;
-  },
-});
+export const supabase = initSupabase();
 
 export function isSupabaseConfigured(): boolean {
-  return getSupabaseClient() !== null;
+  return supabase !== null;
 }
 
 export function getSupabaseUrl(): string {
-  return getEnvVar('VITE_SUPABASE_URL')?.trim() || '';
+  return supabaseUrl?.trim() || '';
 }

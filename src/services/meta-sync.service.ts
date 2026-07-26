@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 
 export interface InstagramMetrics {
   mediaId: string;
@@ -220,7 +220,7 @@ export async function syncAllActivePosts(): Promise<SyncBatchResult> {
     timestamp,
   };
 
-  if (!isSupabaseConfigured()) {
+  if (!supabase) {
     summary.errors.push('Supabase client is not initialized');
     return summary;
   }

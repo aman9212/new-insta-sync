@@ -27,7 +27,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
   const configured = Boolean(supabase);
 
   const refreshProfile = async (): Promise<Profile | null> => {
-    if (!supabase) return null;
+    if (!supabase || !supabase.auth) return null;
     try {
       const { data: auth } = await supabase.auth.getUser();
       if (!auth.user) {
@@ -63,7 +63,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
-    if (!supabase) {
+    if (!supabase || !supabase.auth) {
       setLoading(false);
       return;
     }
@@ -83,6 +83,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!mounted) return;
       setSession(nextSession);
       if (nextSession) {
         void refreshProfile();
@@ -93,7 +94,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
     return () => {
       mounted = false;
-      listener.subscription.unsubscribe();
+      listener?.subscription?.unsubscribe();
     };
   }, []);
 
@@ -106,7 +107,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
     profile,
     refreshProfile,
     signInWithGoogle: async () => {
-      if (!supabase) return;
+      if (!supabase || !supabase.auth) return;
       const redirectTo = `${window.location.origin}/auth/callback`;
       const { error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -115,7 +116,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
       if (oauthError) throw oauthError;
     },
     signOut: async () => {
-      if (!supabase) return;
+      if (!supabase || !supabase.auth) return;
       await supabase.auth.signOut();
       setSession(null);
       setProfile(null);
