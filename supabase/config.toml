@@ -1,0 +1,10 @@
+# Supabase Configuration
+# Documentation: https://supabase.com/docs/guides/cli/config
+
+project_id = "creatorx"
+
+[functions.social-integrations]
+verify_jwt = false
+
+[functions.instagram-sync-worker]
+verify_jwt = false
